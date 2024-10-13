@@ -58,6 +58,6 @@ docker run -d --name fiftyone -v /srv/datastore/fiftyone/:/fiftyone -v /srv/data
 To connect other containers to it we simply do the following (example for a container called bevfusion):
 
 ```
-docker run --name bevfusion_container -v `pwd`:/workspace -v /srv/datastore:/srv/datastore --shm-size=16g -it --gpus all --network fiftyone_network -e FIFTYONE_DATABASE_URI=mongodb://fiftyone_server:27017 bevfusion:last
+docker run --name bevfusion_container -v `pwd`:/workspace -v /srv/datastore:/srv/datastore --shm-size=16g -it --gpus all --network fiftyone_network -e FIFTYONE_DATABASE_URI=mongodb://fiftyone_server:27017 bevfusion:lastest
 ```
 
