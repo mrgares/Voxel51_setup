@@ -20,7 +20,6 @@ graph TD
 
     %% Shared Docker network
     C[Shared Docker Network: fiftyone_network]
-    C --> FiftyOne_Server_Container
     C --> Other_Containers
 
     %% Communication between containers via shared network
