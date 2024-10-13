@@ -13,13 +13,13 @@ graph TD
     
     %% Other containers
     subgraph Other_Containers
-        B1[VL Model Container]
-        B2[YOLO Training Container]
+        B1[Model Container]
+        B2[Training Container]
         B3[Inference Container]
     end
 
     %% Shared Docker network
-    C[Shared Docker Network]
+    C[Shared Docker Network: fiftyone_network]
     C --> FiftyOne_Server_Container
     C --> Other_Containers
 
