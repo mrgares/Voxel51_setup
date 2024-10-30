@@ -95,51 +95,81 @@ def camera_sample(group, filepath, sensor, token):
     sample["cuboids"] = fo.Polylines(polylines=polylines)
     return sample
 
-# run if nuscenes does not exist
+# Existing setup code remains the same...
 if 'nuscenes' not in fo.list_datasets():
     nusc = NuScenes(version='v1.0-trainval', dataroot=DATASET_ROOT, verbose=True)
 
+    # Create the main dataset and add a split field for train/val
     dataset = fo.Dataset(name='nuscenes', persistent=True, overwrite=True)
-    dataset.add_group_field("group", default="CAM_FRONT")
+    dataset.add_group_field("group", default="LIDAR_TOP")
+    dataset.add_sample_field("split", fo.StringField)  
 
     print('Loading dataset...')
+    
+    groups = ("CAM_FRONT", "CAM_FRONT_RIGHT", "CAM_BACK_RIGHT", "CAM_BACK", 
+              "CAM_BACK_LEFT", "CAM_FRONT_LEFT", "LIDAR_TOP", "RADAR_FRONT", 
+              "RADAR_FRONT_LEFT", "RADAR_FRONT_RIGHT", "RADAR_BACK_LEFT", 
+              "RADAR_BACK_RIGHT")
+    
+    train_samples = []
+    val_samples = []
 
-    groups = ("CAM_FRONT", "CAM_FRONT_RIGHT", "CAM_BACK_RIGHT", "CAM_BACK", "CAM_BACK_LEFT", "CAM_FRONT_LEFT","LIDAR_TOP", "RADAR_FRONT", "RADAR_FRONT_LEFT", "RADAR_FRONT_RIGHT", "RADAR_BACK_LEFT", "RADAR_BACK_RIGHT")
-    samples = []
     for scene in nusc.scene:
         my_scene = scene
         token = my_scene['first_sample_token']
         my_sample = nusc.get('sample', token)
-        last_sample_token = my_scene['last_sample_token']
-    
+        
+        # Set split based on scene info, e.g., 80-20 train-validation split
+        is_validation = scene["name"].startswith("val")  # Customize condition as needed
+        split = "validation" if is_validation else "train"
+
         while not my_sample["next"] == "":
             lidar_token = my_sample["data"]["LIDAR_TOP"]
             group = fo.Group()
             for sensor in groups:
                 data = nusc.get('sample_data', my_sample['data'][sensor])
                 filepath = DATASET_ROOT + data["filename"]
+                
                 if data["sensor_modality"] == "lidar":
                     filepath = load_lidar(lidar_token)
-                    sample = lidar_sample(group,filepath, sensor, lidar_token) 
+                    sample = lidar_sample(group, filepath, sensor, lidar_token)
                 elif data["sensor_modality"] == "camera":
-                    # if filepath does not exist, skip
-                    if not os.path.exists(filepath):
-                        break
                     sample = camera_sample(group, filepath, sensor, my_sample['data'][sensor])
                 else:
                     sample = fo.Sample(filepath=filepath, group=group.element(sensor))
 
-                samples.append(sample)
+                # Assign split label to each sample
+                sample["split"] = split
 
-            token = my_sample["next"]   
+                if split == "train":
+                    train_samples.append(sample)
+                else:
+                    val_samples.append(sample)
+
+            token = my_sample["next"]
             my_sample = nusc.get('sample', token)
-    dataset.add_samples(samples)
+
+    # Add samples to dataset
+    dataset.add_samples(train_samples + val_samples)
+
+    # Filter dataset views for training and validation
+    train_view = dataset.match({"split": "train"})
+    val_view = dataset.match({"split": "validation"})
+
 else:
     dataset = fo.load_dataset("nuscenes")
     print('Loaded dataset with %d samples' % len(dataset))
+    # Filter dataset views for training and validation
+    train_view = dataset.match({"split": "train"})
+    val_view = dataset.match({"split": "validation"})
+
 
 print(dataset)
 session = fo.launch_app(dataset)
+
+# Optionally, launch separate sessions for train and validation views
+# session_train = fo.launch_app(train_view)
+# session_val = fo.launch_app(val_view)
 
 # Keep the script alive
 try:
