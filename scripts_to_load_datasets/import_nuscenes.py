@@ -11,13 +11,15 @@ from PIL import Image
 from nuscenes.utils.color_map import get_colormap
 from nuscenes.lidarseg.lidarseg_utils import paint_points_label
 from nuscenes.utils.data_classes import LidarPointCloud
+from nuscenes.utils.splits import create_splits_scenes
 import open3d as o3d
 import os
 import time
+from tqdm import tqdm
 
 
 DATASET_ROOT = "/datastore/nuScenes/"
-
+BATCH_SIZE = 50
 
 def load_lidar(lidar_token):
     #Grab and Generate Colormaps
@@ -70,27 +72,24 @@ def camera_sample(group, filepath, sensor, token):
    #Initialize our sample
     sample = fo.Sample(filepath=filepath, group=group.element(sensor))
     #Load our boxes
-    data_path, boxes, camera_intrinsic = nusc.get_sample_data(token, box_vis_level=BoxVisibility.NONE,)
+    data_path, boxes, camera_intrinsic = nusc.get_sample_data(token, box_vis_level=BoxVisibility.ANY)
     image = Image.open(data_path)
     width, height = image.size
     shape = (height,width)
     polylines = []
     for box in boxes:
-        #Check to see if the box is in the image
-        if box_in_image(box,camera_intrinsic,shape,vis_level=BoxVisibility.ALL):
-            c = np.array(nusc.colormap[box.name]) / 255.0
-            #Convert 3D corners to 2D corners relative to camera
-            corners = view_points(box.corners(), camera_intrinsic, normalize=True)[:2, :]
-            front = [(corners[0][0]/width,corners[1][0]/height),
-                    (corners[0][1]/width,corners[1][1]/height),
-                    (corners[0][2]/width,corners[1][2]/height),
-                    (corners[0][3]/width,corners[1][3]/height),]
-            back =  [(corners[0][4]/width,corners[1][4]/height),
-                    (corners[0][5]/width,corners[1][5]/height),
-                    (corners[0][6]/width,corners[1][6]/height),
-                    (corners[0][7]/width,corners[1][7]/height),]
-            #Create new cuboid and add to list
-            polylines.append(fo.Polyline.from_cuboid(front + back, label=box.name))
+        #Convert 3D corners to 2D corners relative to camera
+        corners = view_points(box.corners(), camera_intrinsic, normalize=True)[:2, :]
+        front = [(corners[0][0]/width,corners[1][0]/height),
+                (corners[0][1]/width,corners[1][1]/height),
+                (corners[0][2]/width,corners[1][2]/height),
+                (corners[0][3]/width,corners[1][3]/height),]
+        back =  [(corners[0][4]/width,corners[1][4]/height),
+                (corners[0][5]/width,corners[1][5]/height),
+                (corners[0][6]/width,corners[1][6]/height),
+                (corners[0][7]/width,corners[1][7]/height),]
+        #Create new cuboid and add to list
+        polylines.append(fo.Polyline.from_cuboid(front + back, label=box.name))
     #Update our sample with its new detections
     sample["cuboids"] = fo.Polylines(polylines=polylines)
     return sample
@@ -101,27 +100,38 @@ if 'nuscenes' not in fo.list_datasets():
 
     # Create the main dataset and add a split field for train/val
     dataset = fo.Dataset(name='nuscenes', persistent=True, overwrite=True)
-    dataset.add_group_field("group", default="LIDAR_TOP")
+    dataset.add_group_field("group", default="CAM_FRONT")
     dataset.add_sample_field("split", fo.StringField)  
 
     print('Loading dataset...')
     
-    groups = ("CAM_FRONT", "CAM_FRONT_RIGHT", "CAM_BACK_RIGHT", "CAM_BACK", 
-              "CAM_BACK_LEFT", "CAM_FRONT_LEFT", "LIDAR_TOP", "RADAR_FRONT", 
+    groups = ("CAM_FRONT_LEFT", "CAM_FRONT", "CAM_FRONT_RIGHT", "CAM_BACK_LEFT", "CAM_BACK", 
+              "CAM_BACK_RIGHT", "LIDAR_TOP", "RADAR_FRONT", 
               "RADAR_FRONT_LEFT", "RADAR_FRONT_RIGHT", "RADAR_BACK_LEFT", 
               "RADAR_BACK_RIGHT")
     
-    train_samples = []
-    val_samples = []
-
-    for scene in nusc.scene:
+    # Get predefined splits
+    splits = create_splits_scenes()
+    train_scenes = splits["train"]
+    val_scenes = splits["val"]
+    
+    
+    batch_samples = []
+    scene_len = len(nusc.scene)
+    for scene_idx, scene in enumerate(tqdm(nusc.scene, desc="Processing scenes", unit="scene")):
+        
         my_scene = scene
         token = my_scene['first_sample_token']
         my_sample = nusc.get('sample', token)
+        scene_name = scene["name"]
         
-        # Set split based on scene info, e.g., 80-20 train-validation split
-        is_validation = scene["name"].startswith("val")  # Customize condition as needed
-        split = "validation" if is_validation else "train"
+        # Determine the split based on scene name
+        if scene_name in train_scenes:
+            split = "train"
+        elif scene_name in val_scenes:
+            split = "validation"
+        else:
+            continue  # Skip scenes not in train/val splits (e.g., test)
 
         while not my_sample["next"] == "":
             lidar_token = my_sample["data"]["LIDAR_TOP"]
@@ -140,28 +150,40 @@ if 'nuscenes' not in fo.list_datasets():
 
                 # Assign split label to each sample
                 sample["split"] = split
+                sample["scene_name"] = scene_name
 
-                if split == "train":
-                    train_samples.append(sample)
-                else:
-                    val_samples.append(sample)
+                batch_samples.append(sample)                 
 
             token = my_sample["next"]
             my_sample = nusc.get('sample', token)
 
-    # Add samples to dataset
-    dataset.add_samples(train_samples + val_samples)
+        # Add batch samples to dataset
+        if scene_idx % BATCH_SIZE == 0:
+            dataset.add_samples(batch_samples)
+            batch_samples = []
+        
+    # Add any remaining samples
+    if batch_samples:
+        dataset.add_samples(batch_samples)
 
     # Filter dataset views for training and validation
     train_view = dataset.match({"split": "train"})
     val_view = dataset.match({"split": "validation"})
-
+    
+    print('Created dataset with %d samples' % len(dataset))
+    print('%d train samples' % len(train_view))
+    print('%d validation samples' % len(val_view))
 else:
     dataset = fo.load_dataset("nuscenes")
     print('Loaded dataset with %d samples' % len(dataset))
-    # Filter dataset views for training and validation
+
+    # Create filtered views for training and validation
     train_view = dataset.match({"split": "train"})
     val_view = dataset.match({"split": "validation"})
+    
+    print('Loaded dataset with %d samples' % len(dataset))
+    print('%d train samples' % len(train_view))
+    print('%d validation samples' % len(val_view))
 
 
 print(dataset)
