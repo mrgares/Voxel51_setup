@@ -2,6 +2,8 @@
 # Author: Follow tutorial from https://voxel51.com/blog/nuscenes-dataset-navigating-the-road-ahead/
 # Date: 28/oct/2024
 
+import os
+os.environ["FIFTYONE_DATABASE_URI"] = "mongodb://fiftyone_server:27017" # Set the correct MongoDB URI for FiftyOne
 import fiftyone as fo
 from nuscenes import NuScenes
 from nuscenes.utils.geometry_utils import  BoxVisibility
