@@ -15,13 +15,12 @@ from nuscenes.lidarseg.lidarseg_utils import paint_points_label
 from nuscenes.utils.data_classes import LidarPointCloud
 from nuscenes.utils.splits import create_splits_scenes
 import open3d as o3d
-import os
 import time
 from tqdm import tqdm
 
 
 DATASET_ROOT = "/datastore/nuScenes/"
-BATCH_SIZE = 50
+BATCH_SIZE = 200
 
 def load_lidar(lidar_token):
     #Grab and Generate Colormaps
@@ -136,23 +135,24 @@ if 'nuscenes' not in fo.list_datasets():
             continue  # Skip scenes not in train/val splits (e.g., test)
 
         while not my_sample["next"] == "":
-            lidar_token = my_sample["data"]["LIDAR_TOP"]
             group = fo.Group()
             for sensor in groups:
-                data = nusc.get('sample_data', my_sample['data'][sensor])
+                sample_token = my_sample['data'][sensor]
+                data = nusc.get('sample_data', sample_token)
                 filepath = DATASET_ROOT + data["filename"]
                 
                 if data["sensor_modality"] == "lidar":
-                    filepath = load_lidar(lidar_token)
-                    sample = lidar_sample(group, filepath, sensor, lidar_token)
+                    filepath = load_lidar(sample_token)
+                    sample = lidar_sample(group, filepath, sensor, sample_token)
                 elif data["sensor_modality"] == "camera":
-                    sample = camera_sample(group, filepath, sensor, my_sample['data'][sensor])
+                    sample = camera_sample(group, filepath, sensor, sample_token)
                 else:
                     sample = fo.Sample(filepath=filepath, group=group.element(sensor))
 
                 # Assign split label to each sample
                 sample["split"] = split
                 sample["scene_name"] = scene_name
+                sample['sample_token'] = sample_token
 
                 batch_samples.append(sample)                 
 
